@@ -1,0 +1,66 @@
+name: Deploy latest stable to Vercel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-stable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find latest stable upstream release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_json="$(curl -fsSL \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            https://api.github.com/repos/drkostas/hevy2garmin/releases/latest)"
+
+          tag="$(jq -r '.tag_name' <<<"$release_json")"
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo 'Could not determine the latest stable release.' >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Latest stable release: $tag"
+
+      - name: Point stable branch at that release
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git remote add upstream https://github.com/drkostas/hevy2garmin.git 2>/dev/null || \
+            git remote set-url upstream https://github.com/drkostas/hevy2garmin.git
+
+          git fetch --force upstream "refs/tags/$TAG:refs/tags/$TAG"
+          release_sha="$(git rev-list -n 1 "$TAG")"
+          current_sha="$(git ls-remote origin refs/heads/stable | awk '{print $1}')"
+
+          if [[ "$current_sha" == "$release_sha" ]]; then
+            echo "stable already points to $TAG ($release_sha)."
+          else
+            git push --force origin "$release_sha:refs/heads/stable"
+            echo "Updated stable to $TAG ($release_sha)."
+          fi
+
+          {
+            echo "## Stable deployment updated"
+            echo
+            echo "- Upstream release: **$TAG**"
+            echo "- Commit: \`$release_sha\`"
+            echo "- Branch: \`stable\`"
+            echo
+            echo "Vercel will deploy this automatically once the project's Production Branch is set to \`stable\`."
+          } >> "$GITHUB_STEP_SUMMARY"
