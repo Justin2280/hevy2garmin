@@ -34,7 +34,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Latest stable release: $tag"
 
-      - name: Point stable branch at that release
+      - name: Update stable branch and trigger Vercel
         shell: bash
         env:
           TAG: ${{ steps.release.outputs.tag }}
@@ -46,21 +46,24 @@ jobs:
 
           git fetch --force upstream "refs/tags/$TAG:refs/tags/$TAG"
           release_sha="$(git rev-list -n 1 "$TAG")"
-          current_sha="$(git ls-remote origin refs/heads/stable | awk '{print $1}')"
 
-          if [[ "$current_sha" == "$release_sha" ]]; then
-            echo "stable already points to $TAG ($release_sha)."
-          else
-            git push --force origin "$release_sha:refs/heads/stable"
-            echo "Updated stable to $TAG ($release_sha)."
-          fi
+          # Use the exact files from the upstream stable tag, plus one empty
+          # deployment commit so clicking Run workflow always triggers Vercel.
+          git checkout --detach "$release_sha"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "deploy: $TAG"
+          deploy_sha="$(git rev-parse HEAD)"
+
+          git push --force origin "$deploy_sha:refs/heads/stable"
 
           {
-            echo "## Stable deployment updated"
+            echo "## Stable deployment triggered"
             echo
             echo "- Upstream release: **$TAG**"
-            echo "- Commit: \`$release_sha\`"
+            echo "- Release commit: \`$release_sha\`"
+            echo "- Deployment commit: \`$deploy_sha\`"
             echo "- Branch: \`stable\`"
             echo
-            echo "Vercel will deploy this automatically once the project's Production Branch is set to \`stable\`."
+            echo "Vercel will deploy this automatically when the project's Production Branch is set to \`stable\`."
           } >> "$GITHUB_STEP_SUMMARY"
